@@ -13,7 +13,7 @@ In Xcode: **File → Add Package Dependencies…** and point at this package, or
 your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/your-org/myappaffiliate-ios", from: "0.1.0")
+.package(url: "https://github.com/myappaffiliate/myappaffiliate-ios", from: "0.1.0")
 ```
 
 Then add `MyAppAffiliate` to your target's dependencies.
