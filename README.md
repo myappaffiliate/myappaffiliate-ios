@@ -89,12 +89,12 @@ if let affiliateId = AffiliateSDK.attributedAffiliateId() {
 
 No IDFA, no fingerprinting, no cross-app tracking. The SDK stores only a generated
 device id (Keychain) and the attributed affiliate id. Attribution is first-party and
-deterministic — see [`../../docs/04-product-vision-and-positioning.md`](../../docs/04-product-vision-and-positioning.md).
+deterministic — see [myappaffiliate.com/privacy](https://myappaffiliate.com/privacy).
 
 ## Development
 
 ```bash
-swift test --package-path prototype/ios-sdk
+swift test
 ```
 
 Storage and HTTP are injectable (`KeyValueStore`, `HTTPPosting`) so the engine is
@@ -102,3 +102,7 @@ unit-tested without Keychain or the network (see `Tests/`).
 
 > A runnable example Xcode app that exercises the full click→install→purchase flow
 > against staging is a follow-up (ENG-19); the snippets above are the integration.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
