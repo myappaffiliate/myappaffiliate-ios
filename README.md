@@ -29,7 +29,16 @@ AffiliateSDK.configure(
 )
 ```
 
+`configure` also starts first-open attribution in the background: it retries
+anything an earlier launch failed to send, and on a fresh install it asks the API
+to match this device against recent clicks. **A user who installed from a
+creator's link is attributed without you calling anything else.**
+
 ## 2. Capture the attribution from the Universal Link
+
+This step is for users who tap a creator's link with your app *already
+installed* — the App Store can't forward the link into a fresh install, which is
+what step 1's automatic matching covers.
 
 Add the **Associated Domains** capability in Xcode with
 `applinks:<your-link-domain>` so taps on a creator's branded link open your app.
@@ -79,11 +88,32 @@ if let affiliateId = AffiliateSDK.attributedAffiliateId() {
 
 | Call | Purpose |
 |---|---|
-| `AffiliateSDK.configure(apiKey:baseURL:)` | Initialize once at launch |
+| `AffiliateSDK.configure(apiKey:baseURL:)` | Initialize once at launch; also runs first-open attribution |
 | `AffiliateSDK.attribute(url:)` | Record attribution from a Universal Link |
 | `AffiliateSDK.applyCode(_:)` | Manual-code attribution fallback |
 | `AffiliateSDK.identify(userId:)` | Bind your user id to the attribution |
 | `AffiliateSDK.attributedAffiliateId()` | The attributed affiliate id (or `nil`) |
+| `AffiliateSDK.reset()` | Clear all persisted state (logout / erasure requests) |
+
+Every call is non-blocking and silent-safe — network failures never throw into
+your app. An attribution that fails to reach us is persisted and retried on the
+next launch, so a user who was offline on first open still attributes.
+
+## How accurate is the attribution?
+
+Three of the four match paths are exact. The fourth is a best guess, and we'd
+rather you know which is which:
+
+| How it matched | Exact? | When |
+|---|---|---|
+| Universal Link claim token | ✅ | app already installed, user taps the link |
+| Creator code | ✅ | user entered `JESS20` |
+| Deferred (IP + time window) | ⚠️ probabilistic | fresh install from a link — the App Store drops the token, so we match a hashed IP against clicks in the last hour |
+
+The deferred path never guesses between two creators: if clicks from two
+different affiliates are in the window, we attribute to neither. No IDFA, no
+device fingerprinting, no cross-app graph — the match uses a hashed IP and a
+timestamp, nothing else.
 
 ## Privacy
 

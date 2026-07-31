@@ -1,7 +1,7 @@
 import Foundation
 
 /// Minimal POST abstraction so the SDK is testable with a mock transport.
-protocol HTTPPosting {
+protocol HTTPPosting: Sendable {
   func post(url: URL, headers: [String: String], body: Data) async throws -> (Data, Int)
 }
 
@@ -38,4 +38,8 @@ struct IdentifyRequest: Encodable {
 struct InstallResponse: Decodable {
   let attributionId: String?
   let affiliateId: String?
+  /// How the server matched this install: "claim_token" / "code" /
+  /// "play_referrer" are deterministic, "deferred_ip" is a probabilistic
+  /// IP-hash + time-window match. Absent on older API deployments.
+  let matchMethod: String?
 }
