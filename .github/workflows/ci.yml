@@ -1,3 +1,4 @@
+# Managed by the monorepo — edit distribution/mirrors/ there, not here.
 name: CI
 
 on:
@@ -6,13 +7,18 @@ on:
   pull_request:
 
 jobs:
-  test:
-    runs-on: macos-14
+  build:
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Swift version
-        run: swift --version
-      - name: Build
-        run: swift build
-      - name: Unit tests
-        run: swift test
+      - run: swift --version
+      - run: swift build -v
+      - run: swift test -v
+      # SwiftPM resolves this repo by tag, so the build a customer performs is
+      # the one that matters: iOS, not the macOS host.
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild -scheme MyAppAffiliate \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            build
