@@ -44,7 +44,7 @@ final class Flag: @unchecked Sendable {
   }
 }
 
-final class AffiliateSDKTests: XCTestCase {
+final class MyAppAffiliateTests: XCTestCase {
   private func makeClient(_ http: HTTPPosting, store: KeyValueStore = InMemoryStore()) -> Client {
     Client(
       apiKey: "pk_test",
@@ -84,12 +84,31 @@ final class AffiliateSDKTests: XCTestCase {
     XCTAssertTrue(body.contains("\"deviceId\""))
   }
 
-  func testAttributeWithoutClaimTokenDoesNothing() async {
+  func testAttributeWithoutAnyReferralDoesNothing() async {
     let http = MockHTTP { _ in (Data(), 200) }
     let client = makeClient(http)
-    let ok = await client.attribute(url: URL(string: "https://go.x/jess")!)
+    let ok = await client.attribute(url: URL(string: "https://go.x/jess?utm_source=x")!)
     XCTAssertFalse(ok)
     XCTAssertEqual(http.requests.count, 0)
+  }
+
+  /// Creators share plain `?via=` links at least as often as tracked ones.
+  func testAttributeFallsBackToAReferralCodeInTheLink() async {
+    let http = MockHTTP { _ in (Data(#"{"affiliateId":"aff_via"}"#.utf8), 200) }
+    let client = makeClient(http)
+    let ok = await client.attribute(url: URL(string: "https://app.x/?via=LUMI&utm_source=yt")!)
+    XCTAssertTrue(ok)
+    XCTAssertEqual(client.attributedAffiliateId(), "aff_via")
+    XCTAssertTrue(String(data: http.requests[0].body, encoding: .utf8)!.contains("LUMI"))
+  }
+
+  func testClaimTokenWinsOverACodeInTheSameLink() async {
+    let http = MockHTTP { _ in (Data(#"{"affiliateId":"aff_tok"}"#.utf8), 200) }
+    let client = makeClient(http)
+    _ = await client.attribute(url: URL(string: "https://app.x/?ct=tok_1&via=LUMI")!)
+    let body = String(data: http.requests[0].body, encoding: .utf8)!
+    XCTAssertTrue(body.contains("tok_1"))
+    XCTAssertFalse(body.contains("LUMI"))
   }
 
   func testApplyCodePostsAffiliateCode() async {
@@ -120,7 +139,7 @@ final class AffiliateSDKTests: XCTestCase {
 
 // MARK: - Deferred attribution, retry, and reset (docs/30 Part 1)
 
-extension AffiliateSDKTests {
+extension MyAppAffiliateTests {
   /// A fresh App Store install: the store dropped the claim token, so the SDK
   /// posts an install with neither token nor code and the server matches on its
   /// side. This is the path that makes link-driven installs attributable at all.
@@ -231,5 +250,71 @@ extension AffiliateSDKTests {
     ] {
       XCTAssertNil(store.string(forKey: key), key)
     }
+  }
+}
+
+// MARK: - Zero-config: the customer never types a host
+
+/// Info.plist stand-in, so the resolution rules can be tested without a host app.
+private final class StubBundle: Bundle, @unchecked Sendable {
+  private let values: [String: String]
+  init(_ values: [String: String]) {
+    self.values = values
+    super.init()
+  }
+  override func object(forInfoDictionaryKey key: String) -> Any? { values[key] }
+}
+
+final class ConfigurationTests: XCTestCase {
+  func testAPIBaseURLDefaultsToProductionWhenNothingOverridesIt() {
+    let resolved = MyAppAffiliateConfiguration.resolveAPIBaseURL(nil, bundle: StubBundle([:]))
+    XCTAssertEqual(resolved, MyAppAffiliateConfiguration.defaultAPIBaseURL)
+    XCTAssertEqual(resolved.absoluteString, "https://api.myappaffiliate.com")
+  }
+
+  func testExplicitAPIBaseURLWins() {
+    let staging = URL(string: "https://staging.example.com")!
+    let bundle = StubBundle(["MyAppAffiliateAPIBaseURL": "https://plist.example.com"])
+    XCTAssertEqual(
+      MyAppAffiliateConfiguration.resolveAPIBaseURL(staging, bundle: bundle), staging)
+  }
+
+  func testInfoPlistSuppliesTheHostWhenNoArgumentIsGiven() {
+    let bundle = StubBundle(["MyAppAffiliateAPIBaseURL": "https://plist.example.com"])
+    XCTAssertEqual(
+      MyAppAffiliateConfiguration.resolveAPIBaseURL(nil, bundle: bundle).absoluteString,
+      "https://plist.example.com")
+  }
+
+  /// A blank build setting resolves to an empty string, and an empty base URL
+  /// would make every request fail silently. Fall through to the default.
+  func testBlankInfoPlistHostFallsBackToTheDefault() {
+    let bundle = StubBundle(["MyAppAffiliateAPIBaseURL": "   "])
+    XCTAssertEqual(
+      MyAppAffiliateConfiguration.resolveAPIBaseURL(nil, bundle: bundle),
+      MyAppAffiliateConfiguration.defaultAPIBaseURL)
+  }
+
+  func testAPIKeyComesFromTheArgumentThenInfoPlist() {
+    let bundle = StubBundle(["MyAppAffiliateAPIKey": "pk_plist"])
+    XCTAssertEqual(MyAppAffiliateConfiguration.resolveAPIKey("pk_arg", bundle: bundle), "pk_arg")
+    XCTAssertEqual(MyAppAffiliateConfiguration.resolveAPIKey(nil, bundle: bundle), "pk_plist")
+    XCTAssertNil(MyAppAffiliateConfiguration.resolveAPIKey(nil, bundle: StubBundle([:])))
+    XCTAssertNil(MyAppAffiliateConfiguration.resolveAPIKey("  ", bundle: StubBundle([:])))
+  }
+
+  /// Without a key nothing can attribute, so start() must report the failure
+  /// rather than leaving a half-configured SDK behind.
+  func testStartWithoutAnyKeyReportsFailureAndStaysInactive() {
+    MyAppAffiliate.tearDownForTesting()
+    XCTAssertFalse(MyAppAffiliate.start(apiKey: ""))
+    XCTAssertFalse(MyAppAffiliate.isStarted)
+  }
+
+  func testStartWithAKeyActivatesTheSDK() {
+    MyAppAffiliate.tearDownForTesting()
+    XCTAssertTrue(MyAppAffiliate.start(apiKey: "pk_test_123"))
+    XCTAssertTrue(MyAppAffiliate.isStarted)
+    MyAppAffiliate.tearDownForTesting()
   }
 }

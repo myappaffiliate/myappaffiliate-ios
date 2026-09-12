@@ -1,13 +1,14 @@
 import Foundation
 
-/// The internal engine behind `AffiliateSDK`. Holds config + storage + transport.
-/// Public methods on `AffiliateSDK` delegate here; tests drive `Client` directly
+/// The internal engine behind `MyAppAffiliate`. Holds config + storage + transport.
+/// Public methods on `MyAppAffiliate` delegate here; tests drive `Client` directly
 /// with an in-memory store and a mock HTTP client.
 final class Client: @unchecked Sendable {
   let apiKey: String
   let baseURL: URL
   let store: KeyValueStore
   let http: HTTPPosting
+  let debug: Bool
   let now: () -> Date
 
   /// Guards the read-then-write in `deviceId` so two concurrent first calls
@@ -29,13 +30,20 @@ final class Client: @unchecked Sendable {
     baseURL: URL,
     store: KeyValueStore,
     http: HTTPPosting,
+    debug: Bool = false,
     now: @escaping () -> Date = Date.init
   ) {
     self.apiKey = apiKey
     self.baseURL = baseURL
     self.store = store
     self.http = http
+    self.debug = debug
     self.now = now
+  }
+
+  func log(_ message: String) {
+    guard debug else { return }
+    print("[myappaffiliate] \(message)")
   }
 
   /// Stable per-install device id, generated once and persisted.
@@ -50,10 +58,33 @@ final class Client: @unchecked Sendable {
 
   func attributedAffiliateId() -> String? { store.string(forKey: affiliateIdKey) }
 
+  /// Query params a referral can arrive under, most trusted first. A claim
+  /// token identifies a specific click; a code only identifies the creator.
+  static let tokenParams = ["claim_token", "ct"]
+  static let codeParams = ["via", "ref", "maa_code", "code"]
+
   /// Extracts the deferred-deep-link claim token from a Universal Link.
   static func claimToken(from url: URL) -> String? {
-    guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-    return comps.queryItems?.first { $0.name == "claim_token" || $0.name == "ct" }?.value
+    queryValue(from: url, names: tokenParams)
+  }
+
+  /// Extracts a referral code (`?via=LUMI`) from a link. Creators share plain
+  /// `?via=` URLs as often as tracked ones, and an app that only looked for a
+  /// claim token would silently drop every one of them.
+  static func referralCode(from url: URL) -> String? {
+    queryValue(from: url, names: codeParams)
+  }
+
+  private static func queryValue(from url: URL, names: [String]) -> String? {
+    guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+      let items = comps.queryItems
+    else { return nil }
+    for name in names {
+      if let value = items.first(where: { $0.name == name })?.value, !value.isEmpty {
+        return value
+      }
+    }
+    return nil
   }
 
   /// Runs at launch, before any link or code arrives. In order:
@@ -82,9 +113,15 @@ final class Client: @unchecked Sendable {
 
   @discardableResult
   func attribute(url: URL) async -> Bool {
-    guard let token = Client.claimToken(from: url) else { return false }
-    store.set(token, forKey: pendingTokenKey)
-    return await postInstall(claimToken: token, affiliateCode: nil)
+    if let token = Client.claimToken(from: url) {
+      store.set(token, forKey: pendingTokenKey)
+      return await postInstall(claimToken: token, affiliateCode: nil)
+    }
+    if let code = Client.referralCode(from: url) {
+      return await applyCode(code)
+    }
+    log("no referral in \(url.absoluteString)")
+    return false
   }
 
   @discardableResult
@@ -140,6 +177,7 @@ final class Client: @unchecked Sendable {
       let affiliateId = parsed.affiliateId
     {
       store.set(affiliateId, forKey: affiliateIdKey)
+      log("attributed to \(affiliateId) via \(parsed.matchMethod ?? "unknown")")
     }
     clearPending()
     return true
